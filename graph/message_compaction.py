@@ -12,7 +12,15 @@ def micro_compact(messages: list[Any], keep_recent: int = 3) -> list[Any]:
     for msg in messages:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tool_call in msg.tool_calls:
-                tool_name_map[tool_call.id] = tool_call.name
+                if isinstance(tool_call, dict):
+                    tool_call_id = tool_call.get("id")
+                    tool_name = tool_call.get("name", "unknown")
+                else:
+                    tool_call_id = getattr(tool_call, "id", None)
+                    tool_name = getattr(tool_call, "name", "unknown")
+
+                if tool_call_id:
+                    tool_name_map[tool_call_id] = tool_name
 
     tool_messages = [
         (index, msg)

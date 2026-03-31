@@ -1,40 +1,42 @@
-from langchain_core.tools import tool
-from pydantic import BaseModel
-from typing import Any
-from langchain_core.messages import HumanMessage, SystemMessage, AnyMessage, ToolMessage
-from graph.tool_policy import get_static_tools_for_agent
-import uuid
-from pathlib import Path
 import os
 import subprocess
+import uuid
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, SystemMessage, AnyMessage, ToolMessage
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+
+from graph.tool_policy import get_static_tools_for_agent
 
 load_dotenv()
-WORKDIR = os.getenv("WORKDIR")
+TARGET_DIR = os.getenv("TARGET_DIR")
 
-def get_project_root():
-    """获取项目根目录（包含 .git 文件夹或特定标志文件的位置）"""
-    current = Path.cwd()
 
-    # 向上查找直到找到项目根目录
-    for parent in current.parents:
-        # 查找标志文件/文件夹
-        if (parent / ".git").exists():
-            return parent
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / "setup.py").exists():
-            return parent
-        if (parent / "requirements.txt").exists():
-            return parent
+def get_project_root(start_path: Path) -> Path:
+    """获取项目根目录（包含 .git 文件夹或特定标志文件的位置）。"""
+    current = start_path.resolve()
+    if current.is_file():
+        current = current.parent
 
-    # 如果找不到，返回当前目录
+    for candidate in [current, *current.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+        if (candidate / "setup.py").exists():
+            return candidate
+        if (candidate / "requirements.txt").exists():
+            return candidate
+
     return current
 
 
-root_dir = get_project_root()
-work_dir = root_dir / WORKDIR if WORKDIR else root_dir
+HARNESS_ROOT = get_project_root(Path(__file__))
+TARGET_ROOT = Path(TARGET_DIR).resolve() if TARGET_DIR else HARNESS_ROOT
+WORKTREE_ROOT = TARGET_ROOT.parent / f"{TARGET_ROOT.name}-worktrees"
 
 
 class Agent(BaseModel):
@@ -47,7 +49,7 @@ class Mail(BaseModel):
     recipient: str
     content: str
     message_type: str = "normal"
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TeamManager:
@@ -101,9 +103,9 @@ class TeamManager:
             "8. 你可以使用 check_mail 查看当前未读邮件摘要，但真正工作前会由系统把邮件送入上下文。"
         )
         self.agent_workspaces = {
-            "lead": str(work_dir),
-            "researcher": str(work_dir),
-            "coder": str(work_dir),
+            "lead": str(TARGET_ROOT),
+            "researcher": str(WORKTREE_ROOT / "researcher"),
+            "coder": str(WORKTREE_ROOT / "coder"),
         }
         self.agents: dict[str, Agent] = {
             "lead": Agent(
@@ -348,32 +350,57 @@ class TeamManager:
                 )
             )
         return f"队友 {teammate} 已恢复为 active"
+
     def list_worktrees(self) -> str:
         result = subprocess.run(
-            'git worktree list --porcelain',
+            "git worktree list --porcelain",
             capture_output=True,
             text=True,
-            cwd=root_dir,
+            cwd=TARGET_ROOT,
         )
         if result.returncode == 0:
             return result.stdout
         else:
             return result.stderr
 
-    def create_agent_workspace(self,agent_name: str, branch_name: str) -> str:
-        self.agent_workspaces[agent_name] = str(root_dir / agent_name)
+    def ensure_agent_workspace(self, agent_name: str) -> None:
+        if agent_name == "lead":
+            self.agent_workspaces[agent_name] = str(TARGET_ROOT)
+            return
+
+        workspace_path = Path(self.agent_workspaces[agent_name])
+        if workspace_path.exists():
+            self.agent_workspaces[agent_name] = str(workspace_path)
+            return
+
+        WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
+        branch_name = f"team-{agent_name}"
         result = subprocess.run(
-            f'git worktree add -b {branch_name} {agent_name}',
+            f'git worktree add "{workspace_path}" -b {branch_name}',
             capture_output=True,
             text=True,
-            cwd=root_dir,
+            cwd=TARGET_ROOT,
         )
         if result.returncode == 0:
-            return result.stdout
+            self.agent_workspaces[agent_name] = str(workspace_path)
         else:
-            return result.stderr
-        pass
+            print(f"[workspace] 创建失败: {result.stderr.strip()}")
+
     def run_agent_once(self, agent_name: str, llm: Any) -> AnyMessage:
+        self.ensure_agent_workspace(agent_name)
+        workspace = self.agent_workspaces.get(agent_name)
+        if workspace:
+            self.agents[agent_name].messages.append(
+                HumanMessage(
+                    content=(
+                        f"<workspace>\n"
+                        f"你的工作目录是 {workspace}。\n"
+                        f"只在该目录下读写文件，不要修改主仓库内容。\n"
+                        f"</workspace>"
+                    )
+                )
+            )
+
         self.deliver_mail(agent_name)
         agent = self.agents[agent_name]
         static_tools = get_static_tools_for_agent(agent_name)
