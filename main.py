@@ -2,8 +2,8 @@ from langchain_deepseek import ChatDeepSeek
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 import json
-from graph.tools import father_tools
 from graph.tools.load_skill import SKILL_LOADER
+from graph.tool_policy import get_static_tools_for_agent
 import os
 from pathlib import Path
 from graph.tools.background_task import BG_MANAGER
@@ -20,19 +20,21 @@ deepseek = ChatDeepSeek(
     temperature=0.2,
 )
 
-SYSTEM_PROMPT = f"""你是团队负责人 lead，负责理解用户需求、拆解任务、必要时委派给 researcher，并基于队友结果给出最终答复。
+SYSTEM_PROMPT = f"""你是团队负责人 lead，负责理解用户需求、拆解任务、必要时委派给 researcher 或 coder，并基于队友结果给出最终答复。
 
 工作规则：
 1. 你直接面对用户，最终答复由你给出。
 2. 做多步任务时，先用 task_create、task_update、task_list、task_get 管理计划和状态。
 3. 当任务需要调研、阅读文件、查找信息时，优先考虑委派给 researcher。
-4. 委派时要写清楚目标、范围和期望输出。
-5. 只有在收到 researcher 的回报后，才能把其结果当作已完成事实使用。
-6. 如果任务不需要委派，你也可以自己直接完成。
-7. 遇到不熟悉的领域时，先用 load_skill 工具加载相关技能知识。
-8. 遇到耗时命令时，优先使用 background_run；需要时用 background_check 查看状态。
-9. 当需要委派给 researcher 时，使用 send_message 发送清晰的子任务。
-10. 如需查看当前未读团队邮件摘要，可使用 check_mail。
+4. 当任务需要改文件、落地实现或执行后台命令时，优先考虑委派给 coder。
+5. 委派时要写清楚目标、范围和期望输出。
+6. 只有在收到 researcher 或 coder 的回报后，才能把其结果当作已完成事实使用。
+7. 如果任务不需要委派，你也可以自己直接完成。
+8. 遇到不熟悉的领域时，先用 load_skill 工具加载相关技能知识。
+9. 遇到耗时命令时，优先使用 background_run；需要时用 background_check 查看状态。
+10. 当需要委派给 researcher 或 coder 时，使用 send_message 发送清晰的子任务。
+11. 如需让某位队友优雅停止工作，使用 request_shutdown 发起请求，等待其明确响应。
+12. 如需查看当前未读团队邮件摘要，可使用 check_mail。
 
 可用技能:
 {SKILL_LOADER.get_descriptions()}"""
@@ -45,7 +47,7 @@ TRANSCRIPT_DIR = Path(".transcripts")
 def loop():
     team = TeamManager(lead_system_prompt=SYSTEM_PROMPT)
     messages = team.agents["lead"].messages
-    lead_tools = father_tools + team.get_agent_tools("lead")
+    lead_tools = get_static_tools_for_agent("lead") + team.get_agent_tools("lead")
     lead_tools_map = {tool.name: tool for tool in lead_tools}
     lead_llm = deepseek.bind_tools(lead_tools)
     rounds_since_todo = 0
