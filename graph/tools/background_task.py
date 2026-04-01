@@ -10,6 +10,12 @@ from enum import Enum
 from threading import Lock,Thread
 WORKDIR = os.getenv("WORKDIR")
 COMMAND_TIMEOUT = 300
+WORKSPACE_BOUND_TOOL_NAMES = {
+    "read_file",
+    "write_file",
+    "list_dir",
+    "background_run",
+}
 class Status(Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -47,16 +53,11 @@ def get_project_root():
     # 如果找不到，返回当前目录
     return current
 
-
-root_dir = get_project_root()
-work_dir = root_dir / WORKDIR if WORKDIR else root_dir
-
-
-def run_command_sync(command: str):
+def run_command_sync(command: str,cwd:str):
     try:
         result = subprocess.run(
             command,
-            cwd=work_dir,
+            cwd=cwd,
             capture_output=True,
             text=True,
             shell=True,
@@ -97,7 +98,7 @@ class BackgroundManager:
         self._notification_queue = []
         self._lock = Lock()
 
-    def run(self, command: str) -> str:
+    def run(self, command: str, cwd: str | None = None) -> str:
         task_id = str(uuid.uuid4())[:8]
         with self._lock:
             self.tasks[task_id] = {
@@ -107,11 +108,11 @@ class BackgroundManager:
                 "return_code": None,
                 "output": "",
             }
-        thread = Thread(target=self._execute, args=(task_id, command), daemon=True)
+        thread = Thread(target=self._execute, args=(task_id, command,cwd), daemon=True)
         thread.start()
         return task_id
-    def _execute(self, task_id, command):
-        result = run_command_sync(command)
+    def _execute(self, task_id, command,cwd):
+        result = run_command_sync(command,cwd)
         with self._lock:
             self.tasks[task_id]["status"] = result["status"]
             self.tasks[task_id]["return_code"] = result["return_code"]

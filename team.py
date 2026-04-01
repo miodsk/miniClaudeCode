@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from graph.tool_policy import get_static_tools_for_agent
+from graph.tools.background_task import BG_MANAGER
 
 load_dotenv()
 TARGET_DIR = os.getenv("TARGET_DIR")
@@ -72,8 +73,9 @@ class TeamManager:
             "7. 如果 researcher 提交了 plan_request，你要审查计划并使用 respond_plan_request 给出批准或拒绝。\n"
             "8. 如需让某位队友停止工作，使用 request_shutdown 发起优雅停止请求，而不是默认其会立刻退出。\n"
             "9. 如果某位已停止的队友需要重新投入工作，使用 reactivate_agent 恢复其 active 状态。\n"
-            "10. 对高风险、大改动、影响面大的方案，要先审批再允许执行。\n"
-            "11. 如果不需要委派，你也可以直接继续处理当前任务。"
+            "10. 如果 coder 提交了 merge_request，你要审查分支/提交信息并使用 respond_merge_request 给出批准或拒绝。\n"
+            "11. 对高风险、大改动、影响面大的方案，要先审批再允许执行。\n"
+            "12. 如果不需要委派，你也可以直接继续处理当前任务。"
         )
         default_researcher_prompt = (
             "你是研究员 researcher。你的职责是接收 lead 委派的子任务，"
@@ -98,9 +100,10 @@ class TeamManager:
             "3. 如需查看全局任务进度，可使用 task_list 和 task_get，但不要自行创建或更新任务。\n"
             "4. 需要耗时命令时优先使用 background_run，并在必要时使用 background_check。\n"
             "5. 收到 shutdown_request 时，应在收尾后使用 respond_shutdown 明确批准或拒绝。\n"
-            "6. 完成后使用 send_message 把结果、改动内容和未解决问题回报给 lead。\n"
-            "7. 如果任务描述不清，先基于现有信息做最合理的实现，再把假设说明清楚。\n"
-            "8. 你可以使用 check_mail 查看当前未读邮件摘要，但真正工作前会由系统把邮件送入上下文。"
+            "6. 如果已经在分支或提交上准备好合并，使用 submit_merge_request 向 lead 发起合并请求。\n"
+            "7. 完成后使用 send_message 把结果、改动内容和未解决问题回报给 lead。\n"
+            "8. 如果任务描述不清，先基于现有信息做最合理的实现，再把假设说明清楚。\n"
+            "9. 你可以使用 check_mail 查看当前未读邮件摘要，但真正工作前会由系统把邮件送入上下文。"
         )
         self.agent_workspaces = {
             "lead": str(TARGET_ROOT),
@@ -141,6 +144,7 @@ class TeamManager:
         }
         self.plan_requests: dict[str, dict[str, Any]] = {}
         self.shutdown_requests: dict[str, dict[str, Any]] = {}
+        self.merge_requests: dict[str, dict[str, Any]] = {}
 
     def send_message(self, sender: str, recipient: str, content: str) -> str:
         if recipient not in self.mailboxes:
@@ -214,6 +218,17 @@ class TeamManager:
 
             agent_tools.append(respond_shutdown)
 
+        if agent_name == "coder":
+
+            @tool
+            def submit_merge_request(
+                branch: str, commit: str = "", summary: str = ""
+            ) -> str:
+                """向 lead 提交合并请求。"""
+                return self.submit_merge_request(agent_name, branch, commit, summary)
+
+            agent_tools.append(submit_merge_request)
+
         if agent_name == "researcher":
 
             @tool
@@ -242,11 +257,99 @@ class TeamManager:
                 """审批某个计划请求，可批准或拒绝。"""
                 return self.respond_plan_request(request_id, approve, feedback)
 
+            @tool
+            def respond_merge_request(
+                request_id: str, approve: bool, feedback: str = ""
+            ) -> str:
+                """审批某个合并请求，可批准或拒绝。"""
+                return self.respond_merge_request(request_id, approve, feedback)
+
             agent_tools.append(request_shutdown)
             agent_tools.append(reactivate_agent)
             agent_tools.append(respond_plan_request)
+            agent_tools.append(respond_merge_request)
 
         return agent_tools
+
+    def get_workspace_bound_tools(
+        self, agent_name: str, static_tools: list[Any]
+    ) -> list[Any]:
+        workspace = Path(self.agent_workspaces[agent_name]).resolve()
+        workspace_bound_tool_names = {
+            "read_file",
+            "write_file",
+            "list_dir",
+            "background_run",
+        }
+
+        def resolve_in_workspace(user_path: str) -> Path:
+            target = (workspace / user_path).resolve()
+            target.relative_to(workspace)
+            return target
+
+        def make_read_file_wrapper(original_tool):
+            @tool("read_file")
+            def workspace_read_file(file_path: str, limit: int | None = None) -> str:
+                """读取当前 agent workspace 内的文件。"""
+                try:
+                    target = resolve_in_workspace(file_path)
+                except ValueError:
+                    return "错误: 路径超出当前 workspace"
+                return original_tool.invoke({"file_path": str(target), "limit": limit})
+
+            return workspace_read_file
+
+        def make_write_file_wrapper(original_tool):
+            @tool("write_file")
+            def workspace_write_file(file_path: str, content: str) -> str:
+                """写入当前 agent workspace 内的文件。"""
+                try:
+                    target = resolve_in_workspace(file_path)
+                except ValueError:
+                    return "错误: 路径超出当前 workspace"
+                return original_tool.invoke(
+                    {"file_path": str(target), "content": content}
+                )
+
+            return workspace_write_file
+
+        def make_list_dir_wrapper(original_tool):
+            @tool("list_dir")
+            def workspace_list_dir(path_str: str = ".", recursive: bool = False) -> str:
+                """列出当前 agent workspace 内的目录内容。"""
+                try:
+                    target = resolve_in_workspace(path_str)
+                except ValueError:
+                    return "错误: 路径超出当前 workspace"
+                return original_tool.invoke(
+                    {"path_str": str(target), "recursive": recursive}
+                )
+
+            return workspace_list_dir
+
+        def make_background_run_wrapper():
+            @tool("background_run")
+            def workspace_background_run(command: str) -> str:
+                """在当前 agent workspace 内后台执行命令。"""
+                task_id = BG_MANAGER.run(command, cwd=str(workspace))
+                return f"后台任务 {task_id} 已启动: {command}"
+
+            return workspace_background_run
+
+        wrapper_factories = {
+            "read_file": make_read_file_wrapper,
+            "write_file": make_write_file_wrapper,
+            "list_dir": make_list_dir_wrapper,
+            "background_run": lambda _tool: make_background_run_wrapper(),
+        }
+
+        bound_tools = []
+        for static_tool in static_tools:
+            if static_tool.name in workspace_bound_tool_names:
+                bound_tools.append(wrapper_factories[static_tool.name](static_tool))
+            else:
+                bound_tools.append(static_tool)
+        return bound_tools
 
     def submit_plan_request(self, sender: str, recipient: str, plan: str) -> str:
         request_id = str(uuid.uuid4())[:8]
@@ -310,6 +413,65 @@ class TeamManager:
         self.mailboxes[teammate].append(mail)
         return f"停止请求 {request_id} 已发送给 {teammate}"
 
+    def submit_merge_request(
+        self, sender: str, branch: str, commit: str = "", summary: str = ""
+    ) -> str:
+        self.ensure_agent_workspace(sender)
+        if not branch:
+            branch = self.get_agent_branch(sender)
+        if not commit:
+            commit = self.get_agent_head_commit(sender)
+        request_id = str(uuid.uuid4())[:8]
+        self.merge_requests[request_id] = {
+            "from": sender,
+            "to": "lead",
+            "branch": branch,
+            "commit": commit,
+            "workspace": self.agent_workspaces.get(sender, ""),
+            "summary": summary,
+            "status": "pending",
+        }
+        mail = Mail(
+            sender=sender,
+            recipient="lead",
+            content=summary or "请求合并当前工作成果。",
+            message_type="merge_request",
+            metadata={
+                "request_id": request_id,
+                "branch": branch,
+                "commit": commit,
+                "workspace": self.agent_workspaces.get(sender, ""),
+            },
+        )
+        self.mailboxes["lead"].append(mail)
+        return f"合并请求 {request_id} 已发送给 lead"
+
+    def respond_merge_request(
+        self, request_id: str, approve: bool, feedback: str = ""
+    ) -> str:
+        req = self.merge_requests.get(request_id)
+        if not req:
+            return f"合并请求 {request_id} 不存在"
+
+        req["status"] = "approved" if approve else "rejected"
+        response_mail = Mail(
+            sender=req["to"],
+            recipient=req["from"],
+            content=feedback,
+            message_type="merge_response",
+            metadata={
+                "request_id": request_id,
+                "approve": approve,
+                "branch": req["branch"],
+                "commit": req["commit"],
+                "workspace": req.get("workspace", ""),
+            },
+        )
+        self.mailboxes[req["from"]].append(response_mail)
+
+        action_text = "批准" if approve else "拒绝"
+        return f"合并请求 {request_id} 已{action_text}"
+
     def respond_shutdown(
         self, sender: str, request_id: str, approve: bool, feedback: str = ""
     ) -> str:
@@ -363,6 +525,30 @@ class TeamManager:
         else:
             return result.stderr
 
+    def get_agent_branch(self, agent_name: str) -> str:
+        workspace = Path(self.agent_workspaces[agent_name])
+        result = subprocess.run(
+            "git rev-parse --abbrev-ref HEAD",
+            capture_output=True,
+            text=True,
+            cwd=workspace,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return ""
+
+    def get_agent_head_commit(self, agent_name: str) -> str:
+        workspace = Path(self.agent_workspaces[agent_name])
+        result = subprocess.run(
+            "git rev-parse HEAD",
+            capture_output=True,
+            text=True,
+            cwd=workspace,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return ""
+
     def ensure_agent_workspace(self, agent_name: str) -> None:
         if agent_name == "lead":
             self.agent_workspaces[agent_name] = str(TARGET_ROOT)
@@ -404,7 +590,8 @@ class TeamManager:
         self.deliver_mail(agent_name)
         agent = self.agents[agent_name]
         static_tools = get_static_tools_for_agent(agent_name)
-        agent_tools = static_tools + self.get_agent_tools(agent_name)
+        bound_static_tools = self.get_workspace_bound_tools(agent_name, static_tools)
+        agent_tools = bound_static_tools + self.get_agent_tools(agent_name)
         tools_map = {tool_obj.name: tool_obj for tool_obj in agent_tools}
         agent_llm = llm.bind_tools(agent_tools)
 
