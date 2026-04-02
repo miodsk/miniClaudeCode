@@ -1,5 +1,5 @@
-import {Application, useApplication, useTick} from '@pixi/react'
-import {Container, Assets, Ticker} from 'pixi.js'
+import {Application, useApplication} from '@pixi/react'
+import {Container} from 'pixi.js'
 import {extend} from '@pixi/react'
 import {useEffect, useRef, useState} from 'react'
 import {Live2DModel} from 'untitled-pixi-live2d-engine/cubism-legacy'
@@ -55,7 +55,7 @@ function Live2DLayer() {
             model.on('hit', async (hitAreas) => {
                 console.log('hitAreas', hitAreas);
                 console.log('model', model.elapsedTime)
-                const success = await model.motion('nf02', 0, 3);
+                await model.motion('nf02', 0, 3);
             });
             // 将 model 实例保存到 ref
             modelRef.current = model

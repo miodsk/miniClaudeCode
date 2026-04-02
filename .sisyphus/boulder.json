@@ -1,0 +1,54 @@
+{
+  "active_plan": "H:\\pyProject\\claudeStudy\\.sisyphus\\plans\\live2d-lead-web-ui.md",
+  "started_at": "2026-04-02T10:54:17.329Z",
+  "session_ids": [
+    "ses_2b374d5fcffelvnwlW1bC9zb4m",
+    "ses_2b229eab3ffe6xpv68Eoqj4gjQ",
+    "ses_2b229aa89ffejTurncE22Q0bp2",
+    "ses_2b215c4acffevho6X4R16Ptfbf",
+    "ses_2b2158c74ffeq6RoTn5vQZNp0L",
+    "ses_2b20697cfffeqUlhY4AT2LnLn6",
+    "ses_2b1fba521ffeMd3Zq89EyYiVXo",
+    "ses_2b1fb3a98ffeH6uetw3C0A4w7T"
+  ],
+  "plan_name": "live2d-lead-web-ui",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:0": {
+      "task_key": "todo:0",
+      "task_label": "0",
+      "task_title": "Align backend dependencies and execution assumptions before implementation",
+      "session_id": "ses_2b229eab3ffe6xpv68Eoqj4gjQ",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-low",
+      "updated_at": "2026-04-02T10:56:55.203Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Define the turn-level backend contract and canonical Live2D metadata mapper",
+      "session_id": "ses_2b215c4acffevho6X4R16Ptfbf",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-02T11:25:08.946Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Build the FastAPI application surface and POST-based SSE API contract",
+      "session_id": "ses_2b20697cfffeqUlhY4AT2LnLn6",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-02T11:45:09.399Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "Preserve a separate CLI debug entry that reuses the new backend core",
+      "session_id": "ses_2b1fba521ffeMd3Zq89EyYiVXo",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-02T11:52:44.743Z"
+    }
+  }
+}

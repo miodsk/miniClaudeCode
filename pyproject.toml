@@ -5,11 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "ai-sdk-python>=0.1.1",
     "black>=26.3.1",
     "cuid2>=2.0.1",
+    "fastapi[standard]>=0.135.3",
+    "uvicorn[standard]>=0.35.0",
     "isort>=8.0.1",
     "langchain>=1.2.13",
     "langchain-deepseek>=1.0.1",
+    "langchain-mcp-adapters>=0.2.2",
     "langgraph>=1.1.3",
+    "mem0ai>=1.0.9",
     "python-dotenv>=1.2.2",
+    "vercel-ai>=0.1.0",
 ]

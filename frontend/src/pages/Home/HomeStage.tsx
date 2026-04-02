@@ -1,4 +1,3 @@
-import {Sparkles} from "lucide-react";
 import Live2D from './Canvas.tsx'
 
 export function HomeStage() {
